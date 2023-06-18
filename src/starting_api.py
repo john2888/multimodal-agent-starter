@@ -89,7 +89,7 @@ class ExampleDocumentQAService(AgentService):
             llm=OpenAI(self.client),
         )
 
-        # This Mixin provides HTTP endpoints that connects this agent to a web client
+        # This Mixin provides HTTP endpoints that
         self.add_mixin(
             SteamshipWidgetTransport(
                 client=self.client, agent_service=self, agent=self._agent
@@ -99,7 +99,7 @@ class ExampleDocumentQAService(AgentService):
     @post("/index_url")
     def index_url(
         self,
-        url: Optional[str] = "https://www.ee.ucl.ac.uk/~mflanaga/Cousin%20Planet%2017.pdf",
+        url: Optional[str] = None,
         metadata: Optional[dict] = None,
         index_handle: Optional[str] = None,
         mime_type: Optional[str] = None,

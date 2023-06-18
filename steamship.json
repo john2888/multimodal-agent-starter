@@ -1,7 +1,7 @@
 {
 	"type": "package",
 	"handle": "teaching-assistant-v-one-bot",
-	"version": "1.0.0-rc.3",
+	"version": "1.0.0-rc.6",
 	"description": "",
 	"author": "",
 	"entrypoint": "Unused",

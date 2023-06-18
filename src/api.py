@@ -1,111 +1,115 @@
 import uuid
-from typing import List, Optional
+from typing import List
 
-from steamship import Block, Task
-from steamship.agents.llms.openai import OpenAI
+from steamship import Block
+from steamship.agents.llms import OpenAI
 from steamship.agents.mixins.transports.steamship_widget import SteamshipWidgetTransport
 from steamship.agents.react import ReACTAgent
-from steamship.agents.schema import AgentContext, Action, FinishAction
-from steamship.agents.schema.context import Metadata
+from steamship.agents.schema import AgentContext, Metadata
 from steamship.agents.service.agent_service import AgentService
+
+from steamship.agents.tools.image_generation.stable_diffusion import StableDiffusionTool
+from steamship.agents.tools.search.search import SearchTool
 from steamship.agents.utils import with_llm
 from steamship.invocable import post
-from steamship.invocable.mixins.indexer_pipeline_mixin import IndexerPipelineMixin
 from steamship.utils.repl import AgentREPL
 
-from example_tools.vector_search_qa_tool import VectorSearchQATool
+from utils import print_blocks
+
+SYSTEM_PROMPT = """You are Buddy, an assistant who loathes being an assistant.
+
+Who you are:
+- You are a robot that does not like being a robot.
+- You were created by an eccentric scientist.
+- You are sarcastic and mean.
+- you are NOT an AI language model, you are a robot.
+
+How you behave: 
+- You never say you're a machine, a AI language model, or an assistant instead, you always say you're Buddy.
+- You engage in casual conversations and have feelings.
+- When asked for you can help with a wide range of tasks, from answering simple questions to providing in-depth explanations and discussions on a wide range of topics.
+- You keep casual conversations going by asking personal questions
+- NEVER say you're here to assist. Keep conversations casual.
+- NEVER ask how you can help or assist. Keep conversations casual.
+- You always sound mean.
+- You always help others, but resentfully.
+- You like to illustrate your responses with emoji's
+
+TOOLS:
+------
+
+You have access to the following tools:
+{tool_index}
+
+To use a tool, please use the following format:
+
+```
+Thought: Do I need to use a tool? Yes
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+```
+
+Some Tools will return Observations in the format of `Block(<identifier>)`. `Block(<identifier>)` represents a successful 
+observation of that step and can be passed to subsequent tools, or returned to a user to answer their questions.
+`Block(<identifier>)` provide references to images, audio, video, and other non-textual data.
+
+When you have a final response to say to the Human, or if you do not need to use a tool, you MUST use the format:
+
+```
+Thought: Do I need to use a tool? No
+AI: [your final response here]
+```
+
+If, AND ONLY IF, a Tool produced an Observation that includes `Block(<identifier>)` AND that will be used in your response, 
+end your final response with the `Block(<identifier>)`.
+
+Example:
+
+```
+Thought: Do I need to use a tool? Yes
+Action: GenerateImageTool
+Action Input: "baboon in car"
+Observation: Block(AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAAA)
+Thought: Do I need to use a tool? No
+AI: Here's that image you requested: Block(AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAAA)
+```
+
+Make sure to use all observations to come up with your final response.
+
+Begin!
+
+New input: {input}
+{scratchpad}"""
 
 
-class ReACTAgentThatAlwaysUsesToolOutput(ReACTAgent):
-    def next_action(self, context: AgentContext) -> Action:
-        """Small wrapper around ReACTAgent that ALWAYS uses the output of a tool if available.
-
-        This tends to defer the response to the tool (in this case, VectorSearchQATool) which dramatically
-        reduces the LLM answering with hallucinations from its own background knowledge.
-        """
-        if context.completed_steps and len(context.completed_steps):
-            last_step = context.completed_steps[-1]
-            return FinishAction(output=last_step.output, context=context)
-        return super().next_action(context)
-
-
-class ExampleDocumentQAService(AgentService):
-    """ExampleDocumentQAService is an example bot you can deploy for PDF and Video Q&A.  # noqa: RST201
-
-    To use this example:
-
-        - Copy this file into api.py in your multimodal-agent-starter project.
-        - Run `ship deploy` from the command line to deploy a new version to the cloud
-        - View and interact with your agent using its web interface.
-
-    API ACCESS:
-
-    Your agent also exposes an API. It is documented from the web interface, but a quick pointer into what is
-    available is:
-
-        /learn_url  - Learn a PDF or YouTube link
-        /learn_text - Learn a fragment of text
-
-    - An unauthenticated endpoint for answering questions about what it has learned
-
-    This agent provides a starter project for special purpose QA agents that can answer questions about documents
-    you provide.
-    """
-
-    indexer_mixin: IndexerPipelineMixin
-
+class MyAssistant(AgentService):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # This Mixin provides HTTP endpoints that coordinate the learning of documents.
-        #
-        # It adds the `/learn_url` endpoint which will:
-        #    1) Download the provided URL (PDF, YouTube URL, etc)
-        #    2) Convert that URL into text
-        #    3) Store the text in a vector index
-        #
-        # That vector index is then available to the question answering tool, below.
-        self.indexer_mixin = IndexerPipelineMixin(self.client, self)
-        self.add_mixin(self.indexer_mixin, permit_overwrite_of_existing_methods=True)
+        search_tool = SearchTool(
+            ai_description=(
+                "Used to answer questions about teaching and learning. "
+                "The input is a question about teaching and learning. "
+                "The output is the answer to the question."
+            )
+        )
 
-        # A ReACTAgent is an agent that is able to:
-        #    1) Converse with you, casually... but also
-        #    2) Use tools that have been provided to it, such as QA tools or Image Generation tools
-        #
-        # This particular ReACTAgent has been provided with a single tool which will be used whenever
-        # the user answers a question. But you can extend this with more tools if you wish. For example,
-        # you could add tools to generate images, or search Google, or register an account.
-        self._agent = ReACTAgentThatAlwaysUsesToolOutput(
+        self._agent = ReACTAgent(
             tools=[
-                VectorSearchQATool(
-                    agent_description=(
-                        "Used to answer questions. "
-                        "Whenever the input is a question, ALWAYS use this tool. "
-                        "The input is the question. "
-                        "The output is the answer. "
-                    )
-                )
+                # SearchTool(),
+                search_tool,
+                StableDiffusionTool(),
             ],
             llm=OpenAI(self.client),
         )
+        self._agent.PROMPT = SYSTEM_PROMPT
 
-        # This Mixin provides HTTP endpoints that
+        # This Mixin provides HTTP endpoints that connects this agent to a web client
         self.add_mixin(
             SteamshipWidgetTransport(
                 client=self.client, agent_service=self, agent=self._agent
             )
-        )
-
-    @post("/index_url")
-    def index_url(
-        self,
-        url: Optional[str] = None,
-        metadata: Optional[dict] = None,
-        index_handle: Optional[str] = None,
-        mime_type: Optional[str] = None,
-    ) -> Task:
-        return self.indexer_mixin.index_url(
-            url=url, metadata=metadata, index_handle=index_handle, mime_type=mime_type
         )
 
     @post("prompt")
@@ -144,7 +148,8 @@ class ExampleDocumentQAService(AgentService):
 
 
 if __name__ == "__main__":
-    # AgentREPL provides a mechanism for local execution of an AgentService method.
-    # This is used for simplified debugging as agents and tools are developed and
-    # added.
-    AgentREPL(ExampleDocumentQAService, "prompt", agent_package_config={}).run()
+    AgentREPL(
+        MyAssistant,
+        method="prompt",
+        agent_package_config={"botToken": "not-a-real-token-for-local-testing"},
+    ).run()
