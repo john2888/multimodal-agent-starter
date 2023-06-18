@@ -87,18 +87,18 @@ class MyAssistant(AgentService):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        search_tool = SearchTool(
-            ai_description=(
-                "Used to answer questions about teaching and learning. "
-                "The input is a question about teaching and learning. "
-                "The output is the answer to the question."
-            )
-        )
+        # search_tool = SearchTool(
+        #    ai_description=(
+        #        "Used to answer questions about teaching and learning. "
+        #        "The input is a question about teaching and learning. "
+        #        "The output is the answer to the question."
+        #    )
+        #)
 
         self._agent = ReACTAgent(
             tools=[
-                # SearchTool(),
-                search_tool,
+                SearchTool(),
+                # search_tool,
                 StableDiffusionTool(),
             ],
             llm=OpenAI(self.client),
